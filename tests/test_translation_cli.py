@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from manim_voiceover.translate import get_gettext, render, translate
 
 

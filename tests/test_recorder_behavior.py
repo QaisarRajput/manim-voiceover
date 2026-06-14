@@ -2,6 +2,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+
 from manim_voiceover.services.recorder import RecorderService
 from manim_voiceover.services.recorder.utility import (
     FIRST_RECORDING_MESSAGES,

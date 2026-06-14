@@ -1,5 +1,5 @@
 [src]
-include = ["manim_voiceover"]
+include = ["src/manim_voiceover"]
 
 [terminal]
 error-on-warning = true
