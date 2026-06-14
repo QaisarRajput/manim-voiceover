@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from manim_voiceover.defaults import DEFAULT_VOICEOVER_CACHE_JSON_FILENAME
 from manim_voiceover.helper import (
     append_to_json_file,

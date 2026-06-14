@@ -2,7 +2,7 @@ python:
   coverage:
     threshold: 85
     paths:
-      - manim_voiceover
+      - src/manim_voiceover
     exclude:
       - pattern: "docs/**"
         reason: "Documentation source is not shipped runtime package code."
@@ -13,7 +13,7 @@ python:
   dry:
     max_findings: 0
     paths:
-      - manim_voiceover
+      - src/manim_voiceover
     exclude:
       - pattern: "docs/**"
         reason: "Documentation source is not production library code."
@@ -24,23 +24,23 @@ python:
       min_tokens: 100
   mutation:
     targets:
-      - manim_voiceover
+      - src/manim_voiceover
     exclude:
       - pattern: "docs/**"
         reason: "Documentation source is not production library code."
       - pattern: "examples/**"
         reason: "Example scenes are documentation/demo code."
   dependency_boundaries:
-    - from: manim_voiceover/services
+    - from: src/manim_voiceover/services
       allow:
-        - manim_voiceover/_typing
-        - manim_voiceover/defaults
-        - manim_voiceover/helper
-        - manim_voiceover/modify_audio
-        - manim_voiceover/tracker
-    - from: manim_voiceover/translate
+        - src/manim_voiceover/_typing
+        - src/manim_voiceover/defaults
+        - src/manim_voiceover/helper
+        - src/manim_voiceover/modify_audio
+        - src/manim_voiceover/tracker
+    - from: src/manim_voiceover/translate
       allow:
-        - manim_voiceover/defaults
-        - manim_voiceover/helper
+        - src/manim_voiceover/defaults
+        - src/manim_voiceover/helper
   typecheck:
     demotions: []

@@ -3,6 +3,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydub import AudioSegment
+from pydub.generators import Sine
+
 from manim_voiceover.helper import (
     append_to_json_file,
     create_dotenv_file,
@@ -15,8 +18,6 @@ from manim_voiceover.helper import (
 )
 from manim_voiceover.tracker import AUDIO_OFFSET_RESOLUTION, TimeInterpolator, VoiceoverTracker
 from manim_voiceover.voiceover_scene import VoiceoverScene, _pop_float, _pop_int, _pop_optional_str
-from pydub import AudioSegment
-from pydub.generators import Sine
 
 
 def _tone(duration):

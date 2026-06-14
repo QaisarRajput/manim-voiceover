@@ -2,13 +2,14 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from pydub import AudioSegment
+
 from manim_voiceover.defaults import DEFAULT_VOICEOVER_CACHE_JSON_FILENAME
 from manim_voiceover.helper import append_to_json_file, chunks, msg_box, remove_bookmarks, trim_silence
 from manim_voiceover.services.base import SpeechService, timestamps_to_word_boundaries
 from manim_voiceover.tracker import AUDIO_OFFSET_RESOLUTION, TimeInterpolator, VoiceoverTracker
 from manim_voiceover.translate.gettext_utils import POEntry, POFile, extract_str
 from manim_voiceover.voiceover_scene import VoiceoverScene
-from pydub import AudioSegment
 
 
 class DummyService(SpeechService):

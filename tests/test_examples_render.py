@@ -6,7 +6,7 @@ from typing import Sequence
 
 import pytest
 
-from _render_assertions import assert_audio_is_speech_like, assert_video_has_audio_stream, load_audible_audio
+from tests._render_assertions import assert_audio_is_speech_like, assert_video_has_audio_stream, load_audible_audio
 
 
 @dataclass(frozen=True)
