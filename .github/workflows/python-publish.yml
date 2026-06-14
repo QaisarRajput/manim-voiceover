@@ -36,6 +36,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install libcairo2-dev libpango1.0-dev ffmpeg portaudio19-dev
+
       - name: Install dependencies
         run: uv sync --dev --frozen
 
