@@ -2,8 +2,9 @@ import importlib
 import sched
 import time
 import wave
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Protocol, Tuple, cast
+from typing import Protocol, cast
 
 import pyaudio
 from pydub import AudioSegment
@@ -65,7 +66,7 @@ def _create_keyboard_listener(
 class MyListener:
     def __init__(self) -> None:
         self.key_pressed = False
-        self._keyboard_listener: Optional[KeyboardListener] = None
+        self._keyboard_listener: KeyboardListener | None = None
 
     def start(self) -> None:
         self._keyboard_listener = _create_keyboard_listener(self.on_press, self.on_release)
@@ -96,10 +97,10 @@ class Recorder:
     def __init__(
         self,
         format: int = pyaudio.paInt16,
-        channels: Optional[int] = None,
+        channels: int | None = None,
         rate: int = 44100,
         chunk: int = 512,
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
         trim_silence_threshold: float = -40.0,
         trim_buffer_start: int = 200,
         trim_buffer_end: int = 200,
@@ -111,13 +112,13 @@ class Recorder:
         self.rate = rate
         self.chunk = chunk
         self.device_index = device_index
-        self.listener: Optional[MyListener] = None
+        self.listener: MyListener | None = None
         self.started = False
-        self.audio: Optional[pyaudio.PyAudio] = None
+        self.audio: pyaudio.PyAudio | None = None
         self.first_call = True
-        self.frames: List[bytes] = []
-        self.task: Optional[sched.scheduler] = None
-        self.stream: Optional[RecorderStream] = None
+        self.frames: list[bytes] = []
+        self.task: sched.scheduler | None = None
+        self.stream: RecorderStream | None = None
         self.trim_silence_threshold = trim_silence_threshold
         self.trim_buffer_start = trim_buffer_start
         self.trim_buffer_end = trim_buffer_end
@@ -309,13 +310,13 @@ class Recorder:
         self,
         in_data: bytes,
         frame_count: int,
-        time_info: Dict[str, float],
+        time_info: dict[str, float],
         status: int,
-    ) -> Tuple[bytes, int]:
+    ) -> tuple[bytes, int]:
         self.frames.append(in_data)
         return (in_data, pyaudio.paContinue)
 
-    def record(self, path: str, message: Optional[str] = None) -> None:
+    def record(self, path: str, message: str | None = None) -> None:
         if message is not None:
             print(message)
         self._record(path)

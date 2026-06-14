@@ -2,43 +2,44 @@ import hashlib
 import importlib
 import json
 import os
-import typing as t
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
+from typing import Protocol, cast
 
 from manim import config, logger
 from slugify import slugify
 
-from manim_voiceover._typing import JsonValue, TranscriptionSegment, VoiceoverData, WordBoundary
+from manim_voiceover._typing import JsonValue, TranscriptionSegment, VoiceoverData, WordBoundary, json_object
 from manim_voiceover.defaults import (
     DEFAULT_VOICEOVER_CACHE_DIR,
     DEFAULT_VOICEOVER_CACHE_JSON_FILENAME,
 )
-from manim_voiceover.helper import (
-    append_to_json_file,
-    prompt_ask_missing_extras,
-    remove_bookmarks,
-)
+from manim_voiceover.helper import prompt_ask_missing_extras, remove_bookmarks
 from manim_voiceover.modify_audio import adjust_speed
+from manim_voiceover.services.cache import (
+    append_voiceover_cache_entry,
+    load_voiceover_cache,
+    parse_voiceover_cache_entry,
+    serialize_voiceover_cache_entry,
+    serialize_voiceover_input_data,
+)
 from manim_voiceover.tracker import AUDIO_OFFSET_RESOLUTION
 
-if t.TYPE_CHECKING:
-    PathLike = t.Union[str, os.PathLike[str]]
-else:
-    PathLike = t.Union[str, os.PathLike]
+PathLike = str | os.PathLike[str]
 
 
-class TranscriptionResult(t.Protocol):
+class TranscriptionResult(Protocol):
     text: str
 
-    def segments_to_dicts(self) -> t.List[TranscriptionSegment]: ...
+    def segments_to_dicts(self) -> list[TranscriptionSegment]: ...
 
 
-class WhisperModel(t.Protocol):
+class WhisperModel(Protocol):
     def transcribe(self, audio_path: str, **kwargs: object) -> TranscriptionResult: ...
 
 
-def _pop_optional_path(kwargs: t.MutableMapping[str, object], key: str) -> t.Optional[PathLike]:
+def _pop_optional_path(kwargs: MutableMapping[str, object], key: str) -> PathLike | None:
     value = kwargs.pop(key, None)
     if value is None:
         return None
@@ -56,21 +57,21 @@ def path_to_string(path: PathLike) -> str:
     raise TypeError("path must resolve to a string path")
 
 
-def _pop_optional_str(kwargs: t.MutableMapping[str, object], key: str) -> t.Optional[str]:
+def _pop_optional_str(kwargs: MutableMapping[str, object], key: str) -> str | None:
     value = kwargs.pop(key, None)
     if value is None or isinstance(value, str):
         return value
     raise TypeError(f"{key} must be a string or None")
 
 
-def _pop_float(kwargs: t.MutableMapping[str, object], key: str, default: float) -> float:
+def _pop_float(kwargs: MutableMapping[str, object], key: str, default: float) -> float:
     value = kwargs.pop(key, default)
     if isinstance(value, (int, float)):
         return float(value)
     raise TypeError(f"{key} must be a number")
 
 
-def _pop_optional_dict(kwargs: t.MutableMapping[str, object], key: str) -> t.Optional[t.Dict[str, object]]:
+def _pop_optional_dict(kwargs: MutableMapping[str, object], key: str) -> dict[str, object] | None:
     value = kwargs.pop(key, None)
     if value is None:
         return None
@@ -81,8 +82,8 @@ def _pop_optional_dict(kwargs: t.MutableMapping[str, object], key: str) -> t.Opt
 
 def initialize_speech_service(
     service: "SpeechService",
-    kwargs: t.MutableMapping[str, object],
-    transcription_model: t.Optional[str] = None,
+    kwargs: MutableMapping[str, object],
+    transcription_model: str | None = None,
 ) -> None:
     model = _pop_optional_str(kwargs, "transcription_model")
     SpeechService.__init__(
@@ -95,8 +96,8 @@ def initialize_speech_service(
     service.additional_kwargs.update(kwargs)
 
 
-def timestamps_to_word_boundaries(segments: t.Sequence[TranscriptionSegment]) -> t.List[WordBoundary]:
-    word_boundaries: t.List[WordBoundary] = []
+def timestamps_to_word_boundaries(segments: Sequence[TranscriptionSegment]) -> list[WordBoundary]:
+    word_boundaries: list[WordBoundary] = []
     current_text_offset = 0
     for segment in segments:
         for dict_ in segment["words"]:
@@ -125,9 +126,9 @@ class SpeechService(ABC):
     def __init__(
         self,
         global_speed: float = 1.00,
-        cache_dir: t.Optional[PathLike] = None,
-        transcription_model: t.Optional[str] = None,
-        transcription_kwargs: t.Optional[t.Dict[str, object]] = None,
+        cache_dir: PathLike | None = None,
+        transcription_model: str | None = None,
+        transcription_kwargs: dict[str, object] | None = None,
         **kwargs: object,
     ) -> None:
         """
@@ -152,8 +153,8 @@ class SpeechService(ABC):
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir)
 
-        self.transcription_model: t.Optional[str] = None
-        self._whisper_model: t.Optional[WhisperModel] = None
+        self.transcription_model: str | None = None
+        self._whisper_model: WhisperModel | None = None
         self.set_transcription(
             model=transcription_model,
             kwargs={} if transcription_kwargs is None else transcription_kwargs,
@@ -169,7 +170,7 @@ class SpeechService(ABC):
         # Replace newlines with lines, reduce multiple consecutive spaces to single
         text = " ".join(text.split())
         raw_path = kwargs.pop("path", None)
-        path: t.Optional[PathLike] = None
+        path: PathLike | None = None
         if raw_path is not None:
             if not isinstance(raw_path, (str, os.PathLike)):
                 raise TypeError("path must be a string or path-like object")
@@ -178,7 +179,9 @@ class SpeechService(ABC):
                 raise TypeError("path must resolve to a string path")
             path = path_string
 
-        dict_ = self.generate_from_text(text, cache_dir=None, path=path, **kwargs)
+        dict_ = serialize_voiceover_cache_entry(
+            parse_voiceover_cache_entry(self.generate_from_text(text, cache_dir=None, path=path, **kwargs))
+        )
         original_audio = dict_["original_audio"]
 
         # Check whether word boundaries exist and if not run stt
@@ -210,10 +213,10 @@ class SpeechService(ABC):
         else:
             dict_["final_audio"] = dict_["original_audio"]
 
-        append_to_json_file(Path(self.cache_dir) / DEFAULT_VOICEOVER_CACHE_JSON_FILENAME, dict_)
+        append_voiceover_cache_entry(Path(self.cache_dir) / DEFAULT_VOICEOVER_CACHE_JSON_FILENAME, dict_)
         return dict_
 
-    def set_transcription(self, model: t.Optional[str] = None, kwargs: t.Optional[t.Dict[str, object]] = None) -> None:
+    def set_transcription(self, model: str | None = None, kwargs: dict[str, object] | None = None) -> None:
         """Set the transcription model and keyword arguments to be passed
         to the transcribe() function.
 
@@ -232,7 +235,7 @@ class SpeechService(ABC):
                 )
                 stable_whisper = importlib.import_module("stable_whisper")
                 # pragma: no mutate start
-                load_model = t.cast(t.Callable[[str], WhisperModel], getattr(stable_whisper, "load_model"))
+                load_model = cast(Callable[[str], WhisperModel], getattr(stable_whisper, "load_model"))
                 # pragma: no mutate end
                 self._whisper_model = load_model(model)
             else:
@@ -241,7 +244,7 @@ class SpeechService(ABC):
         self.transcription_model = model
         self.transcription_kwargs = kwargs
 
-    def get_audio_basename(self, data: t.Mapping[str, JsonValue]) -> str:
+    def get_audio_basename(self, data: Mapping[str, JsonValue]) -> str:
         dumped_data = json.dumps(data)
         # pragma: no mutate start
         data_hash = hashlib.sha256(dumped_data.encode("utf-8")).hexdigest()
@@ -259,8 +262,8 @@ class SpeechService(ABC):
     def generate_from_text(
         self,
         text: str,
-        cache_dir: t.Optional[PathLike] = None,
-        path: t.Optional[PathLike] = None,
+        cache_dir: PathLike | None = None,
+        path: PathLike | None = None,
         **kwargs: object,
     ) -> VoiceoverData:
         """Implement this method for each speech service. Refer to `AzureService` for an example.
@@ -277,20 +280,14 @@ class SpeechService(ABC):
 
     def get_cached_result(
         self,
-        input_data: t.Mapping[str, JsonValue],
+        input_data: Mapping[str, JsonValue],
         cache_dir: PathLike,
-    ) -> t.Optional[VoiceoverData]:
+    ) -> VoiceoverData | None:
         json_path = Path(cache_dir) / DEFAULT_VOICEOVER_CACHE_JSON_FILENAME
-        if os.path.exists(json_path):
-            # pragma: no mutate start
-            with open(json_path, "r") as json_file:
-                # pragma: no mutate end
-                json_data = json.load(json_file)
-            for entry in json_data:
-                if entry["input_data"] == input_data:
-                    # pragma: no mutate start
-                    return t.cast(VoiceoverData, entry)
-                    # pragma: no mutate end
+        requested_input_data = json_object(input_data)
+        for entry in load_voiceover_cache(json_path):
+            if entry.input_data is not None and serialize_voiceover_input_data(entry.input_data) == requested_input_data:
+                return serialize_voiceover_cache_entry(entry)
         return None
 
     def audio_callback(self, audio_path: str, data: VoiceoverData, **kwargs: object) -> None:
