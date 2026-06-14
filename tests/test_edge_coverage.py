@@ -42,13 +42,30 @@ def test_modify_audio_helpers(monkeypatch, tmp_path):
     assert seen_paths == [input_path]
 
     monkeypatch.setattr(
+        "manim_voiceover.modify_audio.WAVE",
+        lambda path: seen_paths.append(path) or SimpleNamespace(info=SimpleNamespace(length=4.0)),
+    )
+    wav_path = tmp_path / "audio.wav"
+    assert get_duration(wav_path) == 4.0
+    assert seen_paths == [input_path, wav_path]
+
+    monkeypatch.setattr(
         "manim_voiceover.modify_audio.MP3",
         lambda path: seen_paths.append(path) or SimpleNamespace(info=None),
     )
     with pytest.raises(ValueError) as exc_info:
         get_duration(input_path)
     assert str(exc_info.value) == f"Could not read MP3 metadata from {input_path}"
-    assert seen_paths == [input_path, input_path]
+    assert seen_paths == [input_path, wav_path, input_path]
+
+    monkeypatch.setattr(
+        "manim_voiceover.modify_audio.WAVE",
+        lambda path: seen_paths.append(path) or SimpleNamespace(info=None),
+    )
+    with pytest.raises(ValueError) as wav_exc_info:
+        get_duration(wav_path)
+    assert str(wav_exc_info.value) == f"Could not read WAVE metadata from {wav_path}"
+    assert seen_paths == [input_path, wav_path, input_path, wav_path]
 
 
 def test_azure_helpers_and_errors(monkeypatch):
@@ -338,6 +355,184 @@ def test_openai_cache_dotenv_and_speed_errors(monkeypatch, tmp_path):
     monkeypatch.setattr("manim_voiceover.services.openai.create_dotenv_openai", lambda: (_ for _ in ()).throw(SystemExit()))
     with pytest.raises(SystemExit):
         service.generate_from_text("hello")
+
+
+def test_gemini_cache_dotenv_key_and_response_errors(monkeypatch, tmp_path):
+    import manim_voiceover.services.gemini as gemini
+
+    class CachedService(gemini.GeminiService):
+        def get_cached_result(self, input_data, cache_dir):
+            assert input_data == {
+                "input_text": "cached",
+                "service": "gemini",
+                "config": {
+                    "voice": "Kore",
+                    "model": "gemini-tts",
+                },
+            }
+            assert cache_dir == tmp_path
+            return {"input_text": "cached", "original_audio": "cached.wav"}
+
+    cached = CachedService.__new__(CachedService)
+    cached.cache_dir = tmp_path
+    cached.voice = "Kore"
+    cached.model = "gemini-tts"
+    cached.get_audio_basename = lambda input_data: "audio"
+    cached.client = SimpleNamespace(
+        models=SimpleNamespace(generate_content=lambda **kwargs: pytest.fail("Cached Gemini result should not call SDK."))
+    )
+    assert cached.generate_from_text("cached") == {"input_text": "cached", "original_audio": "cached.wav"}
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    assert gemini._get_gemini_api_key() == "google-key"
+
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert gemini._get_gemini_api_key() == "gemini-key"
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    real_create_dotenv_gemini = gemini.create_dotenv_gemini
+    monkeypatch.setattr("manim_voiceover.services.gemini.create_dotenv_gemini", lambda: (_ for _ in ()).throw(SystemExit()))
+    with pytest.raises(SystemExit):
+        gemini._get_gemini_api_key()
+    monkeypatch.setattr("manim_voiceover.services.gemini.create_dotenv_gemini", real_create_dotenv_gemini)
+
+    monkeypatch.setattr("manim_voiceover.services.gemini.create_dotenv_gemini", lambda: None)
+    with pytest.raises(RuntimeError) as runtime_exc_info:
+        gemini._get_gemini_api_key()
+    assert str(runtime_exc_info.value) == "Gemini API key setup did not exit."
+    monkeypatch.setattr("manim_voiceover.services.gemini.create_dotenv_gemini", real_create_dotenv_gemini)
+
+    assert gemini._resolve_auth_mode(None) == "api_key"
+    monkeypatch.setenv("GEMINI_AUTH_MODE", "adc")
+    assert gemini._resolve_auth_mode(None) == "adc"
+    assert gemini._resolve_auth_mode("api_key") == "api_key"
+    monkeypatch.setenv("GEMINI_AUTH_MODE", "bad")
+    with pytest.raises(ValueError) as auth_mode_exc_info:
+        gemini._resolve_auth_mode(None)
+    assert str(auth_mode_exc_info.value) == 'auth_mode must be "api_key" or "adc"'
+
+    logs = []
+    dotenv_calls = []
+    monkeypatch.setattr("manim_voiceover.services.gemini.logger.info", lambda message: logs.append(message))
+    monkeypatch.setattr(
+        "manim_voiceover.services.gemini.create_dotenv_file",
+        lambda names: dotenv_calls.append(names) or False,
+    )
+    with pytest.raises(ValueError) as exc_info:
+        gemini.create_dotenv_gemini()
+    assert str(exc_info.value) == (
+        "The environment variables GEMINI_API_KEY and GOOGLE_API_KEY are not set. "
+        "Please set one of them or create a .env file with the variables."
+    )
+    assert logs[0].startswith("Create a Gemini API key")
+    assert dotenv_calls == [gemini.GEMINI_API_KEY_NAMES]
+
+    logs.clear()
+    dotenv_calls.clear()
+    monkeypatch.setattr(
+        "manim_voiceover.services.gemini.create_dotenv_file",
+        lambda names: dotenv_calls.append(names) or True,
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        gemini.create_dotenv_gemini()
+    assert exit_info.value.code is None
+    assert logs[-1] == "The .env file has been created. Please run Manim again."
+    assert dotenv_calls == [gemini.GEMINI_API_KEY_NAMES]
+
+    with pytest.raises(TypeError) as missing_exc_info:
+        gemini._extract_pcm_audio(SimpleNamespace())
+    assert str(missing_exc_info.value) == "Gemini response is missing candidates"
+
+    with pytest.raises(TypeError) as sequence_exc_info:
+        gemini._extract_pcm_audio(SimpleNamespace(candidates=object()))
+    assert str(sequence_exc_info.value) == "Gemini response candidates must be a sequence"
+
+    with pytest.raises(ValueError) as empty_exc_info:
+        gemini._extract_pcm_audio(SimpleNamespace(candidates=[]))
+    assert str(empty_exc_info.value) == "Gemini response candidates must not be empty"
+
+    with pytest.raises(ValueError) as empty_parts_exc_info:
+        gemini._extract_pcm_audio(SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))]))
+    assert str(empty_parts_exc_info.value) == "Gemini response parts must not be empty"
+
+    with pytest.raises(TypeError) as bytes_exc_info:
+        gemini._extract_pcm_audio(
+            SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(parts=[SimpleNamespace(inline_data=SimpleNamespace(data="not-bytes"))])
+                    )
+                ]
+            )
+        )
+    assert str(bytes_exc_info.value) == "Gemini response inline audio data must be bytes"
+
+
+def test_gemini_first_env_value_prefers_first_non_empty_env(monkeypatch):
+    import manim_voiceover.services.gemini as gemini
+
+    for name in ["GEMINI_TEST_MISSING", "GEMINI_TEST_EMPTY", "GEMINI_TEST_VALUE", "GEMINI_TEST_FIRST"]:
+        monkeypatch.delenv(name, raising=False)
+
+    assert gemini._first_env_value(["GEMINI_TEST_MISSING", "GEMINI_TEST_EMPTY"]) is None
+
+    monkeypatch.setenv("GEMINI_TEST_EMPTY", "")
+    monkeypatch.setenv("GEMINI_TEST_VALUE", "env-value")
+    assert gemini._first_env_value(["GEMINI_TEST_EMPTY", "GEMINI_TEST_VALUE"]) == "env-value"
+
+    monkeypatch.setenv("GEMINI_TEST_FIRST", "first-value")
+    assert gemini._first_env_value(["GEMINI_TEST_FIRST", "GEMINI_TEST_VALUE"]) == "first-value"
+
+
+def test_gemini_adc_client_config_resolution(monkeypatch):
+    import manim_voiceover.services.gemini as gemini
+
+    for name in gemini.GEMINI_PROJECT_NAMES + gemini.GEMINI_LOCATION_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+    default_calls = []
+    adc_credentials = object()
+
+    def fake_default(*, scopes):
+        default_calls.append(scopes)
+        return adc_credentials, "default-project"
+
+    monkeypatch.setattr("manim_voiceover.services.gemini.google.auth.default", fake_default)
+    monkeypatch.setenv("GEMINI_PROJECT", "env-project")
+    monkeypatch.setenv("GEMINI_LOCATION", "asia-southeast1")
+    credentials, project, location = gemini._get_adc_client_config(None, None)
+    assert credentials is adc_credentials
+    assert project == "env-project"
+    assert location == "asia-southeast1"
+    assert default_calls == [gemini.ADC_SCOPES]
+
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "google-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    _, project, location = gemini._get_adc_client_config(None, None)
+    assert project == "google-project"
+    assert location == "us-central1"
+
+    _, project, location = gemini._get_adc_client_config("explicit-project", "europe-west1")
+    assert project == "explicit-project"
+    assert location == "europe-west1"
+
+    for name in gemini.GEMINI_PROJECT_NAMES + gemini.GEMINI_LOCATION_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    _, project, location = gemini._get_adc_client_config(None, None)
+    assert project == "default-project"
+    assert location == gemini.DEFAULT_GEMINI_LOCATION
+
+    monkeypatch.setattr(
+        "manim_voiceover.services.gemini.google.auth.default",
+        lambda *, scopes: (adc_credentials, None),
+    )
+    with pytest.raises(ValueError) as adc_project_exc_info:
+        gemini._get_adc_client_config(None, None)
+    assert str(adc_project_exc_info.value) == (
+        "Gemini ADC authentication requires a Google Cloud project. "
+        "Set GOOGLE_CLOUD_PROJECT, GEMINI_PROJECT, or pass project=..."
+    )
 
 
 def test_elevenlabs_helpers(monkeypatch, tmp_path):
