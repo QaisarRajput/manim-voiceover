@@ -18,7 +18,7 @@ Manim Voiceover is a [Manim](https://manim.community) plugin for all things voic
 
 Here is a demo:
 
-https://github.com/user-attachments/assets/76b01569-ffcd-4ddb-b9d3-08685c5d375f
+https://github.com/user-attachments/assets/12fa2621-a120-4ff4-9976-57d6d2bf1371
 
 Currently supported TTS services (aside from the CLI that allows you to records your own voice):
 
